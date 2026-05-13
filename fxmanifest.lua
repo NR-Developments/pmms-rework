@@ -3,15 +3,16 @@ games {"gta5", "rdr3"}
 rdr3_warning "I acknowledge that this is a prerelease build of RedM, and I am aware my resources *will* become incompatible once RedM ships."
 
 name "pmms"
-description "FiveM and RedM syncronized media player"
+description "FiveM and RedM synchronized media player (2026 Updated)"
 author "kibukj"
 repository "https://github.com/kibook/pmms"
+version "2.0.0"
 
 dependency "httpmanager" -- https://github.com/kibook/httpmanager
 
 shared_scripts {
-	"config.lua",
-	"common.lua"
+	"common.lua",
+	"config.lua"
 }
 
 server_script "server.lua"
