@@ -1,3 +1,4 @@
+--- Class factory function
 local Class = {}
 
 setmetatable(Class, {
@@ -19,6 +20,7 @@ DuiBrowser.pool = {}
 DuiBrowser.renderTargets = {}
 DuiBrowser.scaleforms = {}
 
+--- Creates a named rendertarget for a model (2026 update: modernized)
 function DuiBrowser:createNamedRendertargetForModel(model, name)
 	local handle = 0
 
@@ -35,6 +37,7 @@ function DuiBrowser:createNamedRendertargetForModel(model, name)
 	return handle
 end
 
+--- Waits for DUI browser connection with timeout (2026 update: improved error handling)
 function DuiBrowser:waitForConnection()
 	self.initDone = false
 
@@ -44,7 +47,7 @@ function DuiBrowser:waitForConnection()
 
 	while not DuiBrowser.initQueue[self.mediaPlayerHandle].initDone and GetGameTimer() < timeout do
 		self:sendMessage({type = "DuiBrowser:init", handle = self.mediaPlayerHandle})
-		Citizen.Wait(100)
+		Wait(100)  -- 2026: Use Wait() instead of Citizen.Wait()
 	end
 
 	DuiBrowser.initQueue[self.mediaPlayerHandle] = nil
@@ -52,11 +55,12 @@ function DuiBrowser:waitForConnection()
 	if self.initDone then
 		return true
 	else
-		print(("Failed to initialize DUI browser: Could not connect to %s within %d ms"):format(self.duiUrl, Config.dui.timeout))
+		print(("^1[PMMS ERROR]^7 Failed to initialize DUI browser: Could not connect to %s within %d ms"):format(self.duiUrl, Config.dui.timeout))
 		return false
 	end
 end
 
+--- Enables the rendertarget for video display
 function DuiBrowser:enableRenderTarget()
 	if not self.renderTarget then
 		return
@@ -68,9 +72,12 @@ function DuiBrowser:enableRenderTarget()
 
 	self.renderTargetHandle = self:createNamedRendertargetForModel(self.model, self.renderTarget)
 
-	DuiBrowser.renderTargets[self.renderTarget].browsers[self] = true
+	if DuiBrowser.renderTargets[self.renderTarget] then
+		DuiBrowser.renderTargets[self.renderTarget].browsers[self] = true
+	end
 end
 
+--- Disables the rendertarget
 function DuiBrowser:disableRenderTarget()
 	if not self.renderTarget then
 		return
@@ -84,26 +91,38 @@ function DuiBrowser:disableRenderTarget()
 
 	self.renderTargetHandle = nil
 
-	DuiBrowser.renderTargets[self.renderTarget].browsers[self] = nil
+	if DuiBrowser.renderTargets[self.renderTarget] then
+		DuiBrowser.renderTargets[self.renderTarget].browsers[self] = nil
+	end
 end
 
+--- Creates a runtime texture for DUI (2026 update: improved error handling)
 function DuiBrowser:createTexture()
 	self.txdName = "pmms_txd_" .. tostring(self.mediaPlayerHandle)
 	self.txnName = "video"
 	self.txd = CreateRuntimeTxd(self.txdName)
-	self.txn = CreateRuntimeTextureFromDuiHandle(self.txd, self.txnName, self.duiHandle)
+	
+	if self.duiHandle and self.txd then
+		self.txn = CreateRuntimeTextureFromDuiHandle(self.txd, self.txnName, self.duiHandle)
+	end
 end
 
+--- Loads a scaleform movie with timeout (2026 update: improved robustness)
 function DuiBrowser:loadScaleform()
+	if not self.sfHandle then
+		return false
+	end
+
 	local timeout = GetGameTimer() + 5000
 
 	while not HasScaleformMovieLoaded(self.sfHandle) and GetGameTimer() < timeout do
-		Citizen.Wait(0)
+		Wait(0)
 	end
 
 	return HasScaleformMovieLoaded(self.sfHandle)
 end
 
+--- Enables scaleform rendering (2026 update: better null checking)
 function DuiBrowser:enableScaleform()
 	if self.sfHandle then
 		return
@@ -124,24 +143,29 @@ function DuiBrowser:enableScaleform()
 
 		EndScaleformMovieMethod()
 
-		DuiBrowser.scaleforms[self.sfName].browsers[self] = true
+		if DuiBrowser.scaleforms[self.sfName] then
+			DuiBrowser.scaleforms[self.sfName].browsers[self] = true
+		end
 	else
-		print(("Failed to load scaleform %s"):format(self.sfName))
+		print(("^1[PMMS ERROR]^7 Failed to load scaleform %s"):format(self.sfName))
 	end
 end
 
+--- Disables scaleform rendering
 function DuiBrowser:disableScaleform()
 	if not self.sfHandle then
 		return
 	end
 
-	self.sfHandle = nil
-
-	DuiBrowser.scaleforms[self.sfName].browsers[self] = nil
+	if DuiBrowser.scaleforms[self.sfName] then
+		DuiBrowser.scaleforms[self.sfName].browsers[self] = nil
+	end
 
 	SetScaleformMovieAsNoLongerNeeded(self.sfHandle)
+	self.sfHandle = nil
 end
 
+--- Enables rendering based on available output (renderTarget or scaleform)
 function DuiBrowser:enable()
 	if self.renderTarget then
 		self:enableRenderTarget()
@@ -150,6 +174,7 @@ function DuiBrowser:enable()
 	end
 end
 
+--- Disables rendering
 function DuiBrowser:disable()
 	if self.renderTarget then
 		self:disableRenderTarget()
@@ -158,6 +183,7 @@ function DuiBrowser:disable()
 	end
 end
 
+--- Creates a new DUI browser instance (2026 update: improved compatibility)
 function DuiBrowser:new(mediaPlayerHandle, model, renderTarget, scaleform, url)
 	local self = Class.new(self)
 
@@ -176,7 +202,7 @@ function DuiBrowser:new(mediaPlayerHandle, model, renderTarget, scaleform, url)
 
 	local thisResource = GetCurrentResourceName()
 
-	local useHttps = url:sub(1, 8) == "https://"
+	local useHttps = url and url:sub(1, 8) == "https://" or false
 
 	if useHttps then
 		self.duiUrl = Config.dui.urls.https
@@ -184,7 +210,12 @@ function DuiBrowser:new(mediaPlayerHandle, model, renderTarget, scaleform, url)
 		if Config.dui.urls.http then
 			self.duiUrl = Config.dui.urls.http
 		else
-			self.duiUrl = ("http://%s/%s/dui/"):format(GetCurrentServerEndpoint(), thisResource)
+			local serverEndpoint = GetCurrentServerEndpoint()
+			if serverEndpoint then
+				self.duiUrl = ("http://%s/%s/dui/"):format(serverEndpoint, thisResource)
+			else
+				self.duiUrl = ("http://localhost/%s/dui/"):format(thisResource)
+			end
 		end
 	end
 
@@ -221,14 +252,17 @@ function DuiBrowser:new(mediaPlayerHandle, model, renderTarget, scaleform, url)
 		return self
 	else
 		DuiBrowser.pool[self.mediaPlayerHandle] = nil
-		DestroyDui(self.duiObject)
+		if self.duiObject then
+			DestroyDui(self.duiObject)
+		end
 		return nil
 	end
 end
 
+--- Renders a frame to the appropriate output
 function DuiBrowser:renderFrame(drawSprite)
 	if self.renderTarget then
-		if DuiBrowser.renderTargets[self.renderTarget].disabled then
+		if DuiBrowser.renderTargets[self.renderTarget] and DuiBrowser.renderTargets[self.renderTarget].disabled then
 			return
 		end
 
@@ -247,7 +281,7 @@ function DuiBrowser:renderFrame(drawSprite)
 		SetTextRenderId(GetDefaultScriptRendertargetRenderId())
 		SetScriptGfxDrawBehindPausemenu(0)
 	elseif self.scaleform then
-		if DuiBrowser.scaleforms[self.sfName].disabled then
+		if DuiBrowser.scaleforms[self.sfName] and DuiBrowser.scaleforms[self.sfName].disabled then
 			return
 		end
 
@@ -262,10 +296,12 @@ function DuiBrowser:renderFrame(drawSprite)
 	end
 end
 
+--- Draws the browser frame with sprite
 function DuiBrowser:draw()
 	self:renderFrame(true)
 end
 
+--- Checks if a browser exists for a specific render target
 function DuiBrowser:doesBrowserExistForRenderTarget(renderTarget)
 	for handle, duiBrowser in pairs(DuiBrowser.pool) do
 		if duiBrowser.renderTarget == renderTarget then
@@ -276,22 +312,29 @@ function DuiBrowser:doesBrowserExistForRenderTarget(renderTarget)
 	return false
 end
 
+--- Gets a browser from the pool by handle
 function DuiBrowser:getBrowserForHandle(handle)
 	return DuiBrowser.pool[handle]
 end
 
+--- Sends a message to the DUI browser
 function DuiBrowser:sendMessage(data)
-	SendDuiMessage(self.duiObject, json.encode(data))
+	if self.duiObject then
+		SendDuiMessage(self.duiObject, json.encode(data))
+	end
 end
 
+--- Checks if the DUI is available
 function DuiBrowser:isAvailable()
-	return IsDuiAvailable(self.duiObject)
+	return self.duiObject and IsDuiAvailable(self.duiObject)
 end
 
+--- Checks if the browser has a drawable output
 function DuiBrowser:isDrawable()
 	return self.renderTarget ~= nil or self.scaleform ~= nil
 end
 
+--- Gets the name of the drawable output
 function DuiBrowser:getDrawableName()
 	if self.renderTarget then
 		return self.renderTarget
@@ -300,41 +343,62 @@ function DuiBrowser:getDrawableName()
 	end
 end
 
+--- Sets the scaleform for this browser
 function DuiBrowser:setScaleform(scaleform)
 	self.scaleform = scaleform
 end
 
+--- Resets the entire browser pool
 function DuiBrowser:resetPool()
 	for handle, duiBrowser in pairs(DuiBrowser.pool) do
-		duiBrowser:delete()
+		if duiBrowser then
+			duiBrowser:delete()
+		end
 	end
 end
 
+--- Deletes this browser instance (2026 update: improved cleanup)
 function DuiBrowser:delete()
-	if self.renderTarget then
-		self:renderFrame(false)
-		DuiBrowser.renderTargets[self.renderTarget].disabled = true
-		Citizen.Wait(50)
-		DuiBrowser.renderTargets[self.renderTarget].disabled = false
+	if not self then
+		return
 	end
 
-	DuiBrowser.pool[self.mediaPlayerHandle] = nil
-
-	DestroyDui(self.duiObject)
-
 	if self.renderTarget then
-		for duiBrowser, _ in pairs(DuiBrowser.renderTargets[self.renderTarget].browsers) do
-			duiBrowser:disableRenderTarget()
+		self:renderFrame(false)
+		if DuiBrowser.renderTargets[self.renderTarget] then
+			DuiBrowser.renderTargets[self.renderTarget].disabled = true
 		end
-	elseif self.scaleform then
+		Wait(50)
+		if DuiBrowser.renderTargets[self.renderTarget] then
+			DuiBrowser.renderTargets[self.renderTarget].disabled = false
+		end
+	end
+
+	if self.mediaPlayerHandle then
+		DuiBrowser.pool[self.mediaPlayerHandle] = nil
+	end
+
+	if self.duiObject then
+		DestroyDui(self.duiObject)
+	end
+
+	if self.renderTarget and DuiBrowser.renderTargets[self.renderTarget] then
+		for duiBrowser, _ in pairs(DuiBrowser.renderTargets[self.renderTarget].browsers) do
+			if duiBrowser then
+				duiBrowser:disableRenderTarget()
+			end
+		end
+	elseif self.scaleform and DuiBrowser.scaleforms[self.sfName] then
 		for duiBrowser, _ in pairs(DuiBrowser.scaleforms[self.sfName].browsers) do
-			duiBrowser:disableScaleform()
+			if duiBrowser then
+				duiBrowser:disableScaleform()
+			end
 		end
 	end
 end
 
 RegisterNUICallback("DuiBrowser:initDone", function(data, cb)
-	if DuiBrowser.initQueue[data.handle] then
+	if data and data.handle and DuiBrowser.initQueue[data.handle] then
 		DuiBrowser.initQueue[data.handle].initDone = true
 	end
 	cb({})
